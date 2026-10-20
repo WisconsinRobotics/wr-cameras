@@ -68,11 +68,28 @@ class MediaMTXContainer:
 			print("Container stopped.")
 		except docker.errors.NotFound:
 			pass  # already stopped and auto-removed
+
 		self.container = None
 
+	def handle_exit(self, signum=None, frame=None):
+		print("Signal received. Stopping container...")
+		self.stop_container()
+		exit(0)
+
+
+CAMERA_SCAN_START = 0
+CAMERA_SCAN_STOP = 8
+CAMERA_SCAN_STEP = 2
+
+def find_available_cameras() -> list[int]:
+	available_cameras = []
+	for cam_id in range(CAMERA_SCAN_START, CAMERA_SCAN_STOP, CAMERA_SCAN_STEP):
+		device_path = f"/dev/video{cam_id}"
+		if os.path.exists(device_path):
+			available_cameras.append(cam_id)
+	return available_cameras
 
 camera_processes = []
-
 
 def launch_camera(video_id, host):
 	# Publish to the container's bridge IP (NOT 127.0.0.1) so traffic bypasses
@@ -132,7 +149,15 @@ def main():
 	signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
 	media_mtx.start_container()
-	launch_camera(video_id=0, host=media_mtx.ip)
+
+	camera_ids = find_available_cameras()
+
+	if not camera_ids:
+		print("No available cameras found.")
+		return
+
+	for video_id in camera_ids:
+		launch_camera(video_id=video_id, host=media_mtx.ip)
 
 	while True:
 		if any(p.poll() is not None for p in camera_processes):
