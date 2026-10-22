@@ -1,6 +1,7 @@
 import subprocess
 
 import requests
+import argparse
 
 STREAMER_IP = "172.20.10.5"
 
@@ -35,22 +36,28 @@ def receive_stream(ip, name):
 
 
 def main():
-	streams = get_available_streams(STREAMER_IP)
-	if not streams:
-		print("No available streams found.")
-		return
+    # Parse args using argparse
+    parser = argparse.ArgumentParser(prog='WR Camera Reciever', description='Recieves camera data and displays it from WR Camera Streamer', epilog='')
+    parser.add_argument('-i', '--ip', help="the ip of the host (ex. 172.10.0.5)")
+    args = parser.parse_args()
 
-	procs = []
-	for stream in streams:
-		print(f"Receiving stream: {stream}")
-		procs.append(receive_stream(STREAMER_IP, stream))
+    ip = args.ip or STREAMER_IP 
+    streams = get_available_streams(ip)
+    if not streams:
+	    print("No available streams found.")
+	    return
 
-	try:
-		for p in procs:
-			p.wait()
-	except KeyboardInterrupt:
-		for p in procs:
-			p.terminate()
+    procs = []
+    for stream in streams:
+	    print(f"Receiving stream: {stream}")
+	    procs.append(receive_stream(ip, stream))
+
+    try:
+	    for p in procs:
+	        p.wait()
+    except KeyboardInterrupt:
+	    for p in procs:
+		    p.terminate()
 
 
 if __name__ == "__main__":

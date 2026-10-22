@@ -92,9 +92,10 @@ def find_available_cameras() -> list[int]:
 camera_processes = []
 
 def launch_camera(video_id, host):
+    print(f"Camera stream launching for video ID {video_id}.")
 	# Publish to the container's bridge IP (NOT 127.0.0.1) so traffic bypasses
 	# docker-proxy, which rewrites the UDP source port and breaks MediaMTX's check.
-	proc = subprocess.Popen(
+    proc = subprocess.Popen(
 		[
 			"gst-launch-1.0",
 			"v4l2src",
@@ -120,8 +121,8 @@ def launch_camera(video_id, host):
 			f"location=rtsp://{host}:8554/stream{video_id}",
 		]
 	)
-	camera_processes.append(proc)
-	print(f"Camera stream launched for video ID {video_id}.")
+    camera_processes.append(proc)
+    print(f"Camera stream launched for video ID {video_id}.\n")
 
 
 def stop_cameras():
