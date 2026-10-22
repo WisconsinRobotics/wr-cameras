@@ -2,7 +2,7 @@ import subprocess
 
 import requests
 
-HOST = "172.20.10.2"
+STREAMER_IP = "172.20.10.5"
 
 
 def get_available_streams(ip):
@@ -35,7 +35,7 @@ def receive_stream(ip, name):
 
 
 def main():
-	streams = get_available_streams(HOST)
+	streams = get_available_streams(STREAMER_IP)
 	if not streams:
 		print("No available streams found.")
 		return
@@ -43,7 +43,7 @@ def main():
 	procs = []
 	for stream in streams:
 		print(f"Receiving stream: {stream}")
-		procs.append(receive_stream(HOST, stream))
+		procs.append(receive_stream(STREAMER_IP, stream))
 
 	try:
 		for p in procs:
