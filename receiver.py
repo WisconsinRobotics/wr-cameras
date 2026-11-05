@@ -2,7 +2,7 @@ import subprocess
 
 import requests
 
-STREAMER_IP = "172.20.10.5"
+STREAMER_IP = "127.0.0.1"
 
 
 def get_available_streams(ip):

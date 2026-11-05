@@ -89,20 +89,73 @@ def find_available_cameras() -> list[int]:
 			available_cameras.append(cam_id)
 	return available_cameras
 
+TRITON_VENDOR = "Lucid Vision Labs"
+TRITON_WIDTH = 640
+TRITON_HEIGHT = 480
+TRITON_FPS = 30
+
+
+def find_triton_cameras() -> list[str]:
+	"""Return Aravis device IDs (e.g. 'Lucid Vision Labs-TRT016S-C-264101512') of
+	GigE Vision Triton cameras visible on the network."""
+	try:
+		out = subprocess.run(
+			["arv-tool-0.8"], capture_output=True, text=True, timeout=10, check=False
+		).stdout
+	except FileNotFoundError:
+		print("arv-tool-0.8 not found (sudo apt install aravis-tools-cli); skipping Tritons.")
+		return []
+	# Each line looks like: "<vendor>-<model>-<serial> (<ip>)"
+	return [
+		line.rsplit(" (", 1)[0]
+		for line in out.splitlines()
+		if line.startswith(TRITON_VENDOR)
+	]
+
+
 camera_processes = []
 
-def launch_camera(video_id, host):
+
+def v4l2_source(video_id) -> list[str]:
+	return [
+		"v4l2src",
+		f"device=/dev/video{video_id}",
+		"!",
+		"image/jpeg, width=1280, height=720, framerate=30/1",
+		"!",
+		"jpegdec",
+	]
+
+
+def triton_source(camera_id) -> list[str]:
+	# Grab the full sensor as raw Bayer (1 byte/px, lightest on the GigE link),
+	# debayer on the host, then downscale so the whole field of view is kept.
+	return [
+		"aravissrc",
+		f"camera-name={camera_id}",
+		"exposure-auto=on",
+		"gain-auto=on",
+		f"features=AcquisitionFrameRateEnable=true AcquisitionFrameRate={TRITON_FPS}",
+		"!",
+		"video/x-bayer, format=rggb",
+		"!",
+		"bayer2rgb",
+		"!",
+		"videoconvert",
+		"!",
+		"videoscale",
+		"!",
+		f"video/x-raw, width={TRITON_WIDTH}, height={TRITON_HEIGHT}, format=I420",
+	]
+
+
+def launch_camera(source, stream_name, host):
 	# Publish to the container's bridge IP (NOT 127.0.0.1) so traffic bypasses
 	# docker-proxy, which rewrites the UDP source port and breaks MediaMTX's check.
 	proc = subprocess.Popen(
 		[
 			"gst-launch-1.0",
-			"v4l2src",
-			f"device=/dev/video{video_id}",
-			"!",
-			"image/jpeg, width=1280, height=720, framerate=30/1",
-			"!",
-			"jpegdec",
+			*source,
 			"!",
 			"videoconvert",
 			"!",
@@ -117,11 +170,11 @@ def launch_camera(video_id, host):
 			"!",
 			"rtspclientsink",
 			"protocols=udp",
-			f"location=rtsp://{host}:8554/stream{video_id}",
+			f"location=rtsp://{host}:8554/{stream_name}",
 		]
 	)
 	camera_processes.append(proc)
-	print(f"Camera stream launched for video ID {video_id}.")
+	print(f"Camera stream launched: {stream_name}.")
 
 
 def stop_cameras():
@@ -151,13 +204,18 @@ def main():
 	media_mtx.start_container()
 
 	camera_ids = find_available_cameras()
+	triton_ids = find_triton_cameras()
 
-	if not camera_ids:
+	if not camera_ids and not triton_ids:
 		print("No available cameras found.")
 		return
 
 	for video_id in camera_ids:
-		launch_camera(video_id=video_id, host=media_mtx.ip)
+		launch_camera(v4l2_source(video_id), f"stream{video_id}", media_mtx.ip)
+
+	for camera_id in triton_ids:
+		serial = camera_id.rsplit("-", 1)[-1]
+		launch_camera(triton_source(camera_id), f"triton{serial}", media_mtx.ip)
 
 	while True:
 		if any(p.poll() is not None for p in camera_processes):
