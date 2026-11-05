@@ -150,6 +150,7 @@ def triton_source(camera_id) -> list[str]:
 
 
 def launch_camera(source, stream_name, host):
+	print(f"Camera stream launching: {stream_name}.")
 	# Publish to the container's bridge IP (NOT 127.0.0.1) so traffic bypasses
 	# docker-proxy, which rewrites the UDP source port and breaks MediaMTX's check.
 	proc = subprocess.Popen(
@@ -174,7 +175,7 @@ def launch_camera(source, stream_name, host):
 		]
 	)
 	camera_processes.append(proc)
-	print(f"Camera stream launched: {stream_name}.")
+	print(f"Camera stream launched: {stream_name}.\n")
 
 
 def stop_cameras():
