@@ -30,8 +30,7 @@ class MediaMTXContainer:
 				"8001/udp": 8001,
 			},
 			volumes={
-				os.path.abspath("mediamtx.yml"):
-					{"bind": "/mediamtx.yml", "mode": "ro"}
+				os.path.abspath("mediamtx.yml"): {"bind": "/mediamtx.yml", "mode": "ro"}
 			},
 		)
 		self.container.reload()
@@ -74,12 +73,13 @@ class MediaMTXContainer:
 	def handle_exit(self, signum=None, frame=None):
 		print("Signal received. Stopping container...")
 		self.stop_container()
-		exit(0)
+		sys.exit()
 
 
 CAMERA_SCAN_START = 0
 CAMERA_SCAN_STOP = 8
 CAMERA_SCAN_STEP = 2
+
 
 def find_available_cameras() -> list[int]:
 	available_cameras = []
@@ -88,6 +88,7 @@ def find_available_cameras() -> list[int]:
 		if os.path.exists(device_path):
 			available_cameras.append(cam_id)
 	return available_cameras
+
 
 TRITON_VENDOR = "Lucid Vision Labs"
 TRITON_WIDTH = 640
@@ -103,7 +104,9 @@ def find_triton_cameras() -> list[str]:
 			["arv-tool-0.8"], capture_output=True, text=True, timeout=10, check=False
 		).stdout
 	except FileNotFoundError:
-		print("arv-tool-0.8 not found (sudo apt install aravis-tools-cli); skipping Tritons.")
+		print(
+			"arv-tool-0.8 not found (sudo apt install aravis-tools-cli); skipping Tritons."
+		)
 		return []
 	# Each line looks like: "<vendor>-<model>-<serial> (<ip>)"
 	return [
