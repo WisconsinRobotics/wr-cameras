@@ -19,4 +19,5 @@ amcrest: amcrest.py
 	set -a; . ./.env; set +a; uv run amcrest.py
 
 hotspot:
+	sudo nmcli dev wifi rescan
 	sudo nmcli dev wifi connect "josephs-laptop"
