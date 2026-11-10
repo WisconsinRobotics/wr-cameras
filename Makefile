@@ -21,3 +21,7 @@ amcrest: amcrest.py
 hotspot:
 	sudo nmcli dev wifi rescan
 	sudo nmcli dev wifi connect "josephs-laptop"
+
+uwnet:
+	sudo nmcli dev wifi rescan
+	sudo nmcli dev wifi connect "UWNet"
