@@ -1,0 +1,90 @@
+# Builds a newer Aravis than the distro ships (Ubuntu 22.04 has 0.8.20, which
+# turns a Triton's "generic error" GVCP reply into a write_memory timeout) as an
+# arm64 .deb and attaches it to a GitHub release. Install on the Pi with
+# `make aravis-install`.
+#
+# The build runs inside a container matching the Pi's OS so the binaries link
+# against the same glibc/GStreamer. Check the Pi with `cat /etc/os-release`.
+name: Build Aravis (arm64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Aravis git tag to build
+        default: "0.8.30"
+      base_image:
+        description: Docker image matching the Pi's OS
+        default: "ubuntu:22.04"
+
+permissions:
+  contents: write # to create the release
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    container: ${{ inputs.base_image }}
+    env:
+      VERSION: ${{ inputs.version }}
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git meson \
+            ninja-build gettext pkg-config gcc libxml2-dev libglib2.0-dev \
+            libusb-1.0-0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            zlib1g-dev curl
+          # gh CLI, for uploading the release
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=arm64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            > /etc/apt/sources.list.d/github-cli.list
+          apt-get update && apt-get install -y gh
+
+      - name: Build
+        run: |
+          git clone --depth 1 --branch "$VERSION" https://github.com/AravisProject/aravis.git
+          cd aravis
+          meson setup build --prefix=/usr/local --libdir=lib/aarch64-linux-gnu \
+            -Dgst-plugin=enabled \
+            -Dviewer=disabled -Dintrospection=disabled -Ddocumentation=disabled \
+            -Dtests=false
+          ninja -C build
+          DESTDIR="$PWD/../pkg" ninja -C build install
+
+      - name: Package .deb
+        run: |
+          # Link the GStreamer plugin into the system plugin dir (freed up by
+          # Conflicts: libaravis-0.8-0) so no GST_PLUGIN_PATH is needed.
+          SYS_GST=pkg/usr/lib/aarch64-linux-gnu/gstreamer-1.0
+          mkdir -p "$SYS_GST"
+          for f in pkg/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0/*.so; do
+            ln -s "/${f#pkg/}" "$SYS_GST/$(basename "$f")"
+          done
+          ls -l "$SYS_GST"
+          mkdir -p pkg/DEBIAN
+          cat > pkg/DEBIAN/control <<EOF
+          Package: aravis-local
+          Version: $VERSION
+          Architecture: arm64
+          Maintainer: wr-cameras CI
+          Depends: libglib2.0-0, libxml2, libusb-1.0-0, zlib1g, libgstreamer1.0-0, libgstreamer-plugins-base1.0-0
+          Conflicts: libaravis-0.8-0, aravis-tools-cli
+          Description: Aravis $VERSION built from source into /usr/local
+          EOF
+          sed -i 's/^ *//' pkg/DEBIAN/control
+          printf '#!/bin/sh\nldconfig\n' > pkg/DEBIAN/postinst
+          chmod 755 pkg/DEBIAN/postinst
+          dpkg-deb --root-owner-group --build pkg "aravis_${VERSION}_arm64.deb"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAG="aravis-$VERSION"
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "Aravis $VERSION (arm64)" \
+              --notes "Built in ${{ inputs.base_image }}. Install with \`make aravis-install\`."
+          gh release upload "$TAG" "aravis_${VERSION}_arm64.deb" --clobber
