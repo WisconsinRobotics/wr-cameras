@@ -3,8 +3,6 @@ import subprocess
 
 import requests
 
-STREAMER_IP = "127.0.0.1"
-
 
 def get_available_streams(ip):
 	resp = requests.get(f"http://{ip}:9997/v3/paths/list", timeout=5)
@@ -45,7 +43,7 @@ def main():
 	parser.add_argument("-i", "--ip", help="the ip of the host (ex. 172.10.0.5)")
 	args = parser.parse_args()
 
-	ip = args.ip or STREAMER_IP
+	ip = args.ip
 	streams = get_available_streams(ip)
 	if not streams:
 		print("No available streams found.")

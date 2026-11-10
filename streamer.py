@@ -94,6 +94,8 @@ TRITON_VENDOR = "Lucid Vision Labs"
 TRITON_WIDTH = 640
 TRITON_HEIGHT = 480
 TRITON_FPS = 30
+TRITON_SENSOR_WIDTH = 1440  # TRT016S full sensor
+TRITON_SENSOR_HEIGHT = 1080
 
 
 def find_triton_cameras() -> list[str]:
@@ -138,9 +140,14 @@ def triton_source(camera_id) -> list[str]:
 		f"camera-name={camera_id}",
 		"exposure-auto=on",
 		"gain-auto=on",
-		f"features=AcquisitionFrameRateEnable=true AcquisitionFrameRate={TRITON_FPS}",
 		"!",
-		"video/x-bayer, format=rggb",
+		# Pin the full sensor size and frame rate. Left open, caps negotiation can
+		# fixate on a tiny ROI at the camera's max rate (seen: 354 Hz), which the
+		# camera then chokes on during setup.
+		(
+			f"video/x-bayer, format=rggb, width={TRITON_SENSOR_WIDTH}, "
+			f"height={TRITON_SENSOR_HEIGHT}, framerate={TRITON_FPS}/1"
+		),
 		"!",
 		"bayer2rgb",
 		"!",
