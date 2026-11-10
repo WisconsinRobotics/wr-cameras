@@ -118,6 +118,28 @@ def find_triton_cameras() -> list[str]:
 	]
 
 
+def reset_triton(camera_id):
+	"""Load the factory-default user set. The camera keeps settings from earlier
+	sessions (e.g. another machine) until power-cycled, and stale ones can make
+	aravissrc's setup writes time out."""
+	result = subprocess.run(
+		[
+			"arv-tool-0.8",
+			"-n",
+			camera_id,
+			"control",
+			"UserSetSelector=Default",
+			"UserSetLoad",
+		],
+		capture_output=True,
+		text=True,
+		timeout=15,
+		check=False,
+	)
+	if result.returncode != 0:
+		print(f"Warning: could not reset {camera_id}: {result.stderr.strip()}")
+
+
 camera_processes = []
 
 
@@ -226,6 +248,7 @@ def main():
 
 	for camera_id in triton_ids:
 		serial = camera_id.rsplit("-", 1)[-1]
+		reset_triton(camera_id)
 		launch_camera(triton_source(camera_id), f"triton{serial}", media_mtx.ip)
 
 	while True:
