@@ -32,7 +32,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates git meson \
-            ninja-build gettext pkg-config gcc libxml2-dev libglib2.0-dev \
+            ninja-build gettext pkg-config gcc g++ libxml2-dev libglib2.0-dev \
             libusb-1.0-0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             zlib1g-dev curl
           # gh CLI, for uploading the release
