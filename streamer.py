@@ -249,10 +249,8 @@ MPP_ENCODER = [
 
 def encoder_works(encoder) -> bool:
 	"""Encode a few test frames, catching a missing plugin, unsupported
-	properties, or no access to the hardware (/dev/mpp_service)."""
-	if subprocess.run(["gst-inspect-1.0", "--exists", encoder[0]], check=False).returncode != 0:
-		print(f"{encoder[0]} not available.")
-		return False
+	properties, or no access to the hardware (/dev/mpp_service). Prints
+	GStreamer's error on failure so the cause is visible."""
 	try:
 		result = subprocess.run(
 			[
