@@ -218,20 +218,76 @@ def triton_source(camera_id) -> list[str]:
 	]
 
 
+# H.264 encoders, both tuned for lossy UDP links (see README "Networking: why UDP").
+X264_ENCODER = [
+	"x264enc",
+	"tune=zerolatency",
+	"bitrate=1500",
+	"speed-preset=ultrafast",
+	# Rolling intra refresh instead of whole keyframes: no big bursts that
+	# overflow a thin link, and a lost packet's damage heals within
+	# key-int-max frames rather than lasting until the next keyframe.
+	"intra-refresh=true",
+	"key-int-max=15",
+	"vbv-buf-capacity=200",  # cap bitrate spikes to ~200 ms of data
+]
+
+# Rockchip hardware encoder (Orange Pi 5 Plus / RK3588), from the
+# gstreamer-rockchip plugin. It has no intra refresh, so it falls back to
+# periodic keyframes: same 0.5 s heal time, but burstier on a thin link.
+MPP_ENCODER = [
+	"mpph264enc",
+	"rc-mode=cbr",
+	"bps=1500000",
+	"gop=15",  # keyframe every 15 frames, like x264's key-int-max
+	"header-mode=each-idr",  # SPS/PPS with every keyframe
+	# Default lets 16 frames (~0.5 s) pile up inside the encoder when it falls
+	# behind; 1 keeps it real-time (the leaky queue in front drops instead).
+	"max-pending=1",
+]
+
+
+def encoder_works(encoder) -> bool:
+	"""Encode a few test frames, catching a missing plugin, unsupported
+	properties, or no access to the hardware (/dev/mpp_service)."""
+	if subprocess.run(["gst-inspect-1.0", "--exists", encoder[0]], check=False).returncode != 0:
+		print(f"{encoder[0]} not available.")
+		return False
+	try:
+		result = subprocess.run(
+			[
+				"gst-launch-1.0", "videotestsrc", "num-buffers=5",
+				"!", "video/x-raw, format=I420, width=640, height=480, framerate=30/1",
+				"!", *encoder, "!", "h264parse", "!", "fakesink",
+			],
+			capture_output=True,
+			text=True,
+			timeout=10,
+			check=False,
+		)
+	except subprocess.TimeoutExpired:
+		print(f"{encoder[0]} test timed out.")
+		return False
+	if result.returncode != 0:
+		print(f"{encoder[0]} failed its test:\n{(result.stdout + result.stderr).strip()[-500:]}")
+		return False
+	return True
+
+
+@functools.cache
+def h264_encoder() -> list[str]:
+	"""The hardware encoder if it works on this machine, otherwise x264."""
+	if encoder_works(MPP_ENCODER):
+		print("Using the hardware H.264 encoder (mpph264enc).")
+		return MPP_ENCODER
+	print("Using the software H.264 encoder (x264enc).")
+	return X264_ENCODER
+
+
 def rtsp_sink(host, stream_name) -> list[str]:
-	# Encoder is tuned for lossy UDP links (see README "Networking: why UDP").
 	return [
 		"queue", "max-size-buffers=2", "leaky=downstream",  # encoder gets its own thread
-		"!", "x264enc",
-		"tune=zerolatency",
-		"bitrate=1500",
-		"speed-preset=ultrafast",
-		# Rolling intra refresh instead of whole keyframes: no big bursts that
-		# overflow a thin link, and a lost packet's damage heals within
-		# key-int-max frames rather than lasting until the next keyframe.
-		"intra-refresh=true",
-		"key-int-max=15",
-		"vbv-buf-capacity=200",  # cap bitrate spikes to ~200 ms of data
+		"!", *h264_encoder(),
 		"!", "h264parse", "config-interval=-1",  # resend SPS/PPS for late joiners
 		"!", "rtspclientsink", "protocols=udp", f"location=rtsp://{host}:8554/{stream_name}",
 	]
@@ -339,6 +395,7 @@ def main():
 	signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
 	signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
+	h264_encoder()  # pick and report the encoder up front, not on first camera
 	mediamtx.start()
 	supervisor.run()
 

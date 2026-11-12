@@ -27,6 +27,10 @@ only briefly:
   there are no periodic keyframe bursts to overflow the link.
   `vbv-buf-capacity=200` caps bitrate spikes. Lower `bitrate` if the link is
   tighter than about 1.5 Mbit/s per camera.
+  On the Orange Pi the streamer uses the hardware encoder (`mpph264enc`) if
+  it passes a quick test at startup, and falls back to x264 otherwise. The
+  hardware encoder has no intra refresh, so it sends a full keyframe every 15
+  frames instead: recovery time is the same, but the bitrate is burstier.
 - **Receiver (`receiver.py`).** `latency=50` gives the jitter buffer 50 ms, so
   packets that arrive late or out of order still get used instead of being
   dropped. `udp-buffer-size` absorbs bursts. Linux caps the buffer at

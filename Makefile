@@ -1,6 +1,6 @@
 ARCH := $(shell dpkg --print-architecture 2>/dev/null)
 
-.PHONY: setup setup-apt setup-aravis setup-tools setup-camera-net \
+.PHONY: setup setup-apt setup-aravis setup-hwenc setup-tools setup-camera-net \
 	aravis-install aravis-uninstall stream receive amcrest hotspot uwnet
 
 # ---------------------------------------------------------------------------
@@ -8,7 +8,7 @@ ARCH := $(shell dpkg --print-architecture 2>/dev/null)
 # Each step is safe to re-run.
 # ---------------------------------------------------------------------------
 
-setup: setup-apt setup-aravis setup-tools setup-camera-net
+setup: setup-apt setup-aravis setup-hwenc setup-tools setup-camera-net
 	@echo "Setup complete ($(ARCH))."
 
 GST_PACKAGES = libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
@@ -83,6 +83,34 @@ aravis-uninstall:  # back to the distro packages
 	sudo apt remove -y aravis-local
 	sudo apt install -y aravis-tools-cli libaravis-0.8-0
 	rm -rf ~/.cache/gstreamer-1.0
+
+# ---------------------------------------------------------------------------
+# Rockchip hardware H.264 encoder (mpph264enc) for the Orange Pi 5 Plus.
+# Ubuntu doesn't package it; the plugin and its MPP/RGA libraries come from the
+# ubuntu-rockchip multimedia PPA (jammy and noble, arm64). That PPA also ships
+# Rockchip builds of some core GStreamer packages, which replace the distro
+# ones. Skipped on non-Rockchip machines; streamer.py falls back to x264enc
+# whenever the hardware encoder is missing or broken.
+# ---------------------------------------------------------------------------
+
+ROCKCHIP_PPA = ppa:jjriek/rockchip-multimedia
+
+setup-hwenc:
+	@if ! grep -qa rockchip /proc/device-tree/compatible 2>/dev/null; then \
+		echo "Not a Rockchip board: skipping the hardware encoder."; \
+	elif gst-inspect-1.0 --exists mpph264enc; then \
+		echo "mpph264enc already installed."; \
+	else \
+		sudo add-apt-repository -y $(ROCKCHIP_PPA) && \
+		sudo apt update && \
+		sudo apt install -y gstreamer1.0-rockchip1 && \
+		rm -rf ~/.cache/gstreamer-1.0 && \
+		gst-inspect-1.0 mpph264enc | grep -E "Filename|Version"; \
+	fi
+	@if grep -qa rockchip /proc/device-tree/compatible 2>/dev/null && [ ! -e /dev/mpp_service ]; then \
+		echo "Warning: no /dev/mpp_service. This kernel lacks Rockchip's MPP driver (as mainline"; \
+		echo "kernels do), so the hardware encoder won't work; use the vendor kernel."; \
+	fi
 
 # ---------------------------------------------------------------------------
 # Running
