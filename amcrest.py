@@ -1,47 +1,46 @@
 import os
+import subprocess
 import sys
-import urllib.parse
 
-import cv2
-
-# Define connection credentials
 IP = "192.168.1.108"
-PORT = "554"          # Default RTSP port for Amcrest
+PORT = 554  # default RTSP port for Amcrest
 USER = "admin"
-PASSWORD = os.environ.get("PASSWORD")
-if not PASSWORD:
-	print("No password found... exiting!")
-	sys.exit()
+CHANNEL = 1
+SUBTYPE = 0  # 0 = main stream (high res), 1 = sub stream (low res)
 
-CHANNEL = "1"         # Channel 1 is standard
-SUBTYPE = "0"         # 0 = Main Stream (High Res), 1 = Sub Stream (Low Res)
 
-# Construct the standard Amcrest RTSP URL
-encoded_password = urllib.parse.quote(PASSWORD, safe="")
-rtsp_url = f"rtsp://{USER}:{encoded_password}@{IP}:{PORT}/cam/realmonitor?channel={CHANNEL}&subtype={SUBTYPE}"
+def gst_quote(value) -> str:
+	"""Quote a property value for gst-launch so characters like '!' or spaces
+	in it aren't parsed as pipeline syntax."""
+	return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
-# Initialize video capture
-cap = cv2.VideoCapture(rtsp_url)
 
-if not cap.isOpened():
-    print("Error: Could not open the video stream. Check credentials or network connectivity.")
-    exit()
+def main():
+	password = os.environ.get("PASSWORD")
+	if not password:
+		sys.exit("No PASSWORD set (put it in .env); exiting.")
 
-print("Press 'q' inside the video window to exit.")
+	url = f"rtsp://{IP}:{PORT}/cam/realmonitor?channel={CHANNEL}&subtype={SUBTYPE}"
+	print("Close the video window or press Ctrl+C to exit.")
+	try:
+		subprocess.run(
+			[
+				"gst-launch-1.0",
+				"rtspsrc",
+				f"location={gst_quote(url)}",
+				f"user-id={gst_quote(USER)}",
+				f"user-pw={gst_quote(password)}",
+				"protocols=udp",  # see README "Networking: why UDP"
+				"latency=50",
+				"!", "decodebin",  # picks the right depayloader/decoder (H.264 or H.265)
+				"!", "videoconvert",
+				"!", "autovideosink", "sync=false",
+			],
+			check=False,
+		)
+	except KeyboardInterrupt:
+		pass
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        print("Failed to grab frame.")
-        break
 
-    # Display the live stream
-    cv2.imshow("Amcrest Live Stream", frame)
-
-    # Break loop on 'q' key press
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-# Clean up
-cap.release()
-cv2.destroyAllWindows()
+if __name__ == "__main__":
+	main()

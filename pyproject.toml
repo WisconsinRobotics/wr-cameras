@@ -6,6 +6,5 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "docker>=7.2.0",
-    "opencv-python>=5.0.0.93",
     "requests>=2.34.2",
 ]
