@@ -1,6 +1,7 @@
 import atexit
 import functools
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -30,6 +31,9 @@ ARV_TOOL = "arv-tool-0.8"
 TRITON_VENDOR = "Lucid Vision Labs"
 TRITON_SENSOR_WIDTH = 1440
 TRITON_SENSOR_HEIGHT = 1080
+# 2x2 binning on the camera: 720x540 of the full view, 4x less data to move
+# over GigE and debayer than the full 1440x1080.
+TRITON_BINNING = 2
 TRITON_WIDTH = 640
 TRITON_HEIGHT = 480
 TRITON_FPS = 30
@@ -144,28 +148,58 @@ def find_triton_cameras() -> list[str]:
 	]
 
 
-def reset_triton(camera_id):
-	"""Load the factory-default user set. The camera keeps settings from earlier
-	sessions (e.g. another machine) until power-cycled, and stale ones can make
-	aravissrc's setup writes time out."""
+def arv_control(camera_id, *features) -> subprocess.CompletedProcess | None:
+	"""Read ("Name") or write ("Name=value") camera features in order.
+	Returns None if arv-tool timed out."""
 	try:
-		result = subprocess.run(
-			[ARV_TOOL, "-n", camera_id, "control", "UserSetSelector=Default", "UserSetLoad"],
+		return subprocess.run(
+			[ARV_TOOL, "-n", camera_id, "control", *features],
 			capture_output=True,
 			text=True,
 			timeout=15,
 			check=False,
 		)
 	except subprocess.TimeoutExpired:
+		return None
+
+
+def reset_triton(camera_id):
+	"""Load the factory-default user set. The camera keeps settings from earlier
+	sessions (e.g. another machine) until power-cycled, and stale ones can make
+	aravissrc's setup writes time out."""
+	result = arv_control(camera_id, "UserSetSelector=Default", "UserSetLoad")
+	if result is None:
 		print(f"Warning: resetting {camera_id} timed out.")
-		return
-	if result.returncode != 0:
+	elif result.returncode != 0:
 		print(f"Warning: could not reset {camera_id}: {result.stderr.strip()}")
+
+
+def bin_triton(camera_id) -> int:
+	"""Turn on binning so the camera sends a smaller image of the full field of
+	view. Returns the binning factor in effect (1 if the camera refused).
+
+	Color Tritons only bin on the camera's FPGA ("Digital"), and only in raw
+	Bayer formats. aravissrc can't select that mode itself (its `features`
+	are applied after its binning write), so it's done here beforehand."""
+	arv_control(
+		camera_id,
+		"BinningSelector=Digital",
+		f"BinningHorizontal={TRITON_BINNING}",
+		f"BinningVertical={TRITON_BINNING}",
+	)
+	# Read back rather than trust the exit code: arv-tool doesn't reliably
+	# fail on a missing feature or a rejected value.
+	result = arv_control(camera_id, "BinningHorizontal", "BinningVertical")
+	values = re.findall(r"Binning(?:Horizontal|Vertical) = (\d+)", result.stdout) if result else []
+	if values == [str(TRITON_BINNING)] * 2:
+		return TRITON_BINNING
+	print(f"Warning: couldn't enable binning on {camera_id}; using full resolution.")
+	return 1
 
 
 def prepare_triton(camera_id) -> list[str]:
 	reset_triton(camera_id)
-	return triton_source(camera_id)
+	return triton_source(camera_id, bin_triton(camera_id))
 
 
 def discover_cameras() -> dict[str, Callable[[], list[str]]]:
@@ -192,20 +226,21 @@ def v4l2_source(video_id) -> list[str]:
 	]
 
 
-def triton_source(camera_id) -> list[str]:
-	# Grab the full sensor as raw Bayer (1 byte/px, lightest on the GigE link),
-	# debayer on the host, then downscale so the whole field of view is kept.
+def triton_source(camera_id, binning=1) -> list[str]:
+	# Grab the whole sensor (binned on the camera if possible) as raw Bayer
+	# (1 byte/px, lightest on the GigE link), debayer on the host, then
+	# downscale so the whole field of view is kept.
 	return [
 		"aravissrc", f"camera-name={camera_id}", "exposure-auto=on", "gain-auto=on",
-		# Pin the full sensor size and frame rate. Left open, caps negotiation can
-		# fixate on a tiny ROI at the camera's max rate (seen: 354 Hz), which the
-		# camera then chokes on during setup.
+		# Pin the full (binned) sensor size and frame rate. Left open, caps
+		# negotiation can fixate on a tiny ROI at the camera's max rate (seen:
+		# 354 Hz), which the camera then chokes on during setup.
 		"!", (
-			f"video/x-bayer, format=rggb, width={TRITON_SENSOR_WIDTH}, "
-			f"height={TRITON_SENSOR_HEIGHT}, framerate={TRITON_FPS}/1"
+			f"video/x-bayer, format=rggb, width={TRITON_SENSOR_WIDTH // binning}, "
+			f"height={TRITON_SENSOR_HEIGHT // binning}, framerate={TRITON_FPS}/1"
 		),
 		# Queues split the pipeline into threads; without them every element runs
-		# on one core and the Pi can't keep up at full sensor size.
+		# on one core and the Pi can fall behind.
 		# leaky=downstream drops old frames rather than building up lag.
 		"!", "queue", "max-size-buffers=2", "leaky=downstream",
 		"!", "bayer2rgb",
