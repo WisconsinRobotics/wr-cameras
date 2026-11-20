@@ -116,8 +116,10 @@ setup-hwenc:
 # Running
 # ---------------------------------------------------------------------------
 
+# FULL_RES=1: Tritons at full 1440x1080 instead of 640x480.
+FULL_RES ?= 0
 stream: streamer.py
-	uv run streamer.py
+	uv run streamer.py $(if $(filter 1,$(FULL_RES)),--full-res)
 
 IP ?= 10.42.0.61
 receive: receiver.py

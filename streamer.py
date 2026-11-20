@@ -1,3 +1,4 @@
+import argparse
 import atexit
 import functools
 import os
@@ -197,18 +198,20 @@ def bin_triton(camera_id) -> int:
 	return 1
 
 
-def prepare_triton(camera_id) -> list[str]:
-	reset_triton(camera_id)
+def prepare_triton(camera_id, full_res=False) -> list[str]:
+	reset_triton(camera_id)  # factory defaults: binning off
+	if full_res:
+		return triton_source(camera_id, full_res=True)
 	return triton_source(camera_id, bin_triton(camera_id))
 
 
-def discover_cameras() -> dict[str, Callable[[], list[str]]]:
+def discover_cameras(full_res=False) -> dict[str, Callable[[], list[str]]]:
 	"""Map each connected camera's stream name to a function that readies the
 	camera and returns its GStreamer source."""
 	cameras = {f"stream{i}": functools.partial(v4l2_source, i) for i in find_v4l2_cameras()}
 	for camera_id in find_triton_cameras():
 		serial = camera_id.rsplit("-", 1)[-1]
-		cameras[f"triton{serial}"] = functools.partial(prepare_triton, camera_id)
+		cameras[f"triton{serial}"] = functools.partial(prepare_triton, camera_id, full_res)
 	return cameras
 
 
@@ -226,10 +229,19 @@ def v4l2_source(video_id) -> list[str]:
 	]
 
 
-def triton_source(camera_id, binning=1) -> list[str]:
+def triton_source(camera_id, binning=1, full_res=False) -> list[str]:
 	# Grab the whole sensor (binned on the camera if possible) as raw Bayer
 	# (1 byte/px, lightest on the GigE link), debayer on the host, then
-	# downscale so the whole field of view is kept.
+	# downscale so the whole field of view is kept. full_res sends the
+	# unbinned sensor image as-is.
+	if full_res:
+		scale = []
+	else:
+		scale = [
+			# Scale before converting so videoconvert works on 640x480, not 1440x1080.
+			"!", "videoscale", "n-threads=4",
+			"!", f"video/x-raw, width={TRITON_WIDTH}, height={TRITON_HEIGHT}",
+		]
 	return [
 		"aravissrc", f"camera-name={camera_id}", "exposure-auto=on", "gain-auto=on",
 		# Pin the full (binned) sensor size and frame rate. Left open, caps
@@ -245,9 +257,7 @@ def triton_source(camera_id, binning=1) -> list[str]:
 		"!", "queue", "max-size-buffers=2", "leaky=downstream",
 		"!", "bayer2rgb",
 		"!", "queue", "max-size-buffers=2",
-		# Scale before converting so videoconvert works on 640x480, not 1440x1080.
-		"!", "videoscale", "n-threads=4",
-		"!", f"video/x-raw, width={TRITON_WIDTH}, height={TRITON_HEIGHT}",
+		*scale,
 		"!", "videoconvert", "n-threads=4",
 		"!", "video/x-raw, format=I420",
 	]
@@ -363,13 +373,14 @@ class Supervisor:
 	"""Keeps one pipeline running per connected camera, restarting any that
 	exit or stall, and picking up cameras that appear later."""
 
-	def __init__(self, mediamtx):
+	def __init__(self, mediamtx, full_res=False):
 		self.mediamtx = mediamtx
+		self.full_res = full_res
 		self.pipelines: dict[str, Pipeline] = {}
 		self.waiting = False
 
 	def launch_missing(self):
-		cameras = discover_cameras()
+		cameras = discover_cameras(self.full_res)
 		if not cameras and not self.pipelines and not self.waiting:
 			print("No cameras found; waiting for one to connect...")
 		self.waiting = not cameras
@@ -416,8 +427,22 @@ class Supervisor:
 
 
 def main():
+	parser = argparse.ArgumentParser(
+		prog="WR Camera Streamer",
+		description="Streams every connected camera to MediaMTX over RTSP.",
+	)
+	parser.add_argument(
+		"-f", "--full-res", action="store_true",
+		help=(
+			f"send Tritons at full sensor resolution ({TRITON_SENSOR_WIDTH}x"
+			f"{TRITON_SENSOR_HEIGHT}) instead of binned and scaled to "
+			f"{TRITON_WIDTH}x{TRITON_HEIGHT}"
+		),
+	)
+	args = parser.parse_args()
+
 	mediamtx = MediaMTXContainer()
-	supervisor = Supervisor(mediamtx)
+	supervisor = Supervisor(mediamtx, args.full_res)
 
 	def cleanup():
 		supervisor.stop()
